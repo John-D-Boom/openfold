@@ -989,6 +989,9 @@ class StructureModule(nn.Module):
             fmt="quat",
         )
         outputs = []
+
+        post_line_9_emb_dict = {}
+
         for i in range(self.no_blocks):
             # [*, N, C_s]
             s = s + self.ipa(
@@ -1003,6 +1006,12 @@ class StructureModule(nn.Module):
             s = self.ipa_dropout(s)
             s = self.layer_norm_ipa(s)
             s = self.transition(s)
+
+            #save s if i=0 or i = self.no_blocks -1, the first and last block of structure module
+            #these are added to outputs below
+
+            if i ==0 or i == self.no_blocks-1:
+                post_line_9_emb_dict["single_rep_post_nine_layer_" + str(i)] = s
            
             # [*, N]
             rigids = rigids.compose_q_update_vec(self.bb_update(s))
@@ -1060,6 +1069,11 @@ class StructureModule(nn.Module):
 
         outputs = dict_multimap(torch.stack, outputs)
         outputs["single"] = s
+        outputs["sm_embeddings"] = {}
+        #Add single rep to outputs
+
+        for k in post_line_9_emb_dict.keys():
+            outputs["sm_embeddings"][k] = post_line_9_emb_dict[k]
 
         return outputs
 
