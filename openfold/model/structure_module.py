@@ -992,7 +992,8 @@ class StructureModule(nn.Module):
 
         post_line_9_emb_dict = {}
 
-        for i in range(self.no_blocks):
+        # for i in range(self.no_blocks): #SWAPPED HERE TO TRUNCATE SM TO JUST ONE BLOCK
+        for i in range(1):
             # [*, N, C_s]
             s = s + self.ipa(
                 s, 
