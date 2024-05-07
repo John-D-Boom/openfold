@@ -992,8 +992,8 @@ class StructureModule(nn.Module):
 
         post_line_9_emb_dict = {}
 
-        # for i in range(self.no_blocks): #SWAPPED HERE TO TRUNCATE SM TO JUST ONE BLOCK
-        for i in range(1):
+        for i in range(self.no_blocks): #SWAPPED HERE TO TRUNCATE SM TO JUST ONE BLOCK
+        # for i in range(1):
             # [*, N, C_s]
             s = s + self.ipa(
                 s, 
@@ -1198,6 +1198,83 @@ class StructureModule(nn.Module):
             outputs = self._forward_multimer(evoformer_output_dict, aatype, mask, inplace_safe, _offload_inference)
         else:
             outputs = self._forward_monomer(evoformer_output_dict, aatype, mask, inplace_safe, _offload_inference)
+
+        return outputs
+
+    def single_rep_to_struct(self, s_initial, post_line_9_single_rep, aatype):
+        """
+        Converts a single representation to a protein structure by passing the single_representation into line 10 of the
+        structure module algorithm.
+
+        Args:
+            s_initial (torch.Tensor): The single representation post_evoformer. Named s_initial to match _forward_monomer
+            post_line_9_single_rep (torch.Tensor): The single representation after line 9 of the structure module algorithm
+            aatype (torch.Tensor): The amino acid type of each residue in the protein structure. The easiest way to get this
+                                    is to load the .pdb using protein.from_pdb_string to make a protein object and then call
+                                    protein.aatype
+
+        Returns:
+            dict: A dictionary containing all of the normal info from the structure module, including the info necessary to construct a .pdb file
+        """
+        
+        # [*, N]
+        rigids = Rigid.identity(
+            s_initial.shape[:-1], 
+            s_initial.dtype, 
+            s_initial.device, 
+            self.training,
+            fmt="quat",
+        )
+        outputs = []
+
+        rigids = rigids.compose_q_update_vec(self.bb_update(post_line_9_single_rep))
+
+        # To hew as closely as possible to AlphaFold, we convert our
+        # quaternion-based transformations to rotation-matrix ones
+        # here
+        backb_to_global = Rigid(
+            Rotation(
+                rot_mats=rigids.get_rots().get_rot_mats(), 
+                quats=None
+            ),
+            rigids.get_trans(),
+        )
+
+        backb_to_global = backb_to_global.scale_translation(
+            self.trans_scale_factor
+        )
+
+        # [*, N, 7, 2]
+        unnormalized_angles, angles = self.angle_resnet(post_line_9_single_rep, s_initial)
+
+        all_frames_to_global = self.torsion_angles_to_frames(
+            backb_to_global,
+            angles,
+            aatype,
+        )
+
+        pred_xyz = self.frames_and_literature_positions_to_atom14_pos(
+            all_frames_to_global,
+            aatype,
+        )
+
+        scaled_rigids = rigids.scale_translation(self.trans_scale_factor)
+            
+        preds = {
+            "frames": scaled_rigids.to_tensor_7(),
+            "sidechain_frames": all_frames_to_global.to_tensor_4x4(),
+            "unnormalized_angles": unnormalized_angles,
+            "angles": angles,
+            "positions": pred_xyz,
+            "states": post_line_9_single_rep,
+        }
+
+        outputs.append(preds)
+
+        rigids = rigids.stop_rot_gradient()
+
+        outputs = dict_multimap(torch.stack, outputs)
+        outputs["single"] = post_line_9_single_rep
 
         return outputs
 

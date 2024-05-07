@@ -589,3 +589,23 @@ class AlphaFold(nn.Module):
         outputs.update(self.aux_heads(outputs))
 
         return outputs
+
+    def forward_single_rep(self, post_evo_single, post_line_nine_single, aatype):
+            """
+            Converts a single representation to a protein structure by passing the single_representation into line 10 of the
+            structure module algorithm. Then collects plddt (but NOT pTM since that requires a pair rep). 
+
+            Args:
+                post_evo_single (torch.Tensor): The single representation post_evoformer.
+                post_line_nine_single (torch.Tensor): The single representation after line 9 of the structure module algorithm
+                aatype (torch.Tensor): The amino acid type of each residue in the protein structure. The easiest way to get this
+                                        is to load the .pdb using protein.from_pdb_string to make a protein object and then call
+                                        protein.aatype
+
+            Returns:
+                dict: A dictionary containing all of the normal info from the structure module, including the info necessary to construct a .pdb file and per-residue plddt
+            """
+            outputs = self.structure_module.single_rep_to_struct(post_evo_single, post_line_nine_single, aatype)
+            outputs.update(self.aux_heads.single_rep_aux_eval(post_line_nine_single))
+
+            return outputs

@@ -96,6 +96,27 @@ class AuxiliaryHeads(nn.Module):
 
         return aux_out
 
+    def single_rep_aux_eval(self, single_rep):
+            """
+            Evaluate auxiliary outputs for a single representation.
+
+            Args:
+                single_rep (torch.Tensor): An input single representation at the end of the structure module
+
+            Returns:
+                dict: A dictionary containing the auxiliary outputs.
+                    - "lddt_logits" (torch.Tensor): The logits for lddt.
+                    - "plddt" (torch.Tensor): The computed plddt values per residue.
+            """
+            aux_out = {}
+            lddt_logits = self.plddt(single_rep)
+            aux_out["lddt_logits"] = lddt_logits
+
+            # Required for relaxation later on
+            aux_out["plddt"] = compute_plddt(lddt_logits)
+
+            return aux_out
+
 
 class PerResidueLDDTCaPredictor(nn.Module):
     def __init__(self, no_bins, c_in, c_hidden):
