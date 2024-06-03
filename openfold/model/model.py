@@ -609,3 +609,12 @@ class AlphaFold(nn.Module):
             outputs.update(self.aux_heads.single_rep_aux_eval(post_line_nine_single))
 
             return outputs
+
+    def line_nine_through_whole(self, post_evo_single, post_line_nine_single, pair_rep, aatype):
+        """
+        
+        """
+        outputs = self.structure_module.post_line_nine_hook(post_evo_single, post_line_nine_single, pair_rep, aatype)
+        outputs.update(self.aux_heads.single_rep_aux_eval(outputs["single"]))
+
+        return outputs

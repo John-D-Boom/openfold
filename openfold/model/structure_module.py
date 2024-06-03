@@ -1201,6 +1201,151 @@ class StructureModule(nn.Module):
 
         return outputs
 
+    def post_line_nine_hook(self, s_initial, post_line_9_single_rep, pair, aatype):
+        
+        # [*, N, N, C_z]
+        z = self.layer_norm_z(pair)
+
+        # [*, N, C_s]
+        s_initial = self.layer_norm_s(s_initial)
+
+        # [*, N, C_s]
+        s = post_line_9_single_rep
+
+        #mask to include everything
+        # [*, N]
+        mask = s.new_ones(s.shape[:-1])
+
+        # [*, N]
+        rigids = Rigid.identity(
+            s.shape[:-1], 
+            s.dtype, 
+            s.device, 
+            self.training,
+            fmt="quat",
+        )
+        outputs = []
+        #Start with finishing the previous layer of backbone update
+
+        rigids = rigids.compose_q_update_vec(self.bb_update(s))
+
+        # To hew as closely as possible to AlphaFold, we convert our
+        # quaternion-based transformations to rotation-matrix ones
+        # here
+        backb_to_global = Rigid(
+            Rotation(
+                rot_mats=rigids.get_rots().get_rot_mats(), 
+                quats=None
+            ),
+            rigids.get_trans(),
+        )
+
+        backb_to_global = backb_to_global.scale_translation(
+            self.trans_scale_factor
+        )
+
+        # [*, N, 7, 2]
+        unnormalized_angles, angles = self.angle_resnet(post_line_9_single_rep, s_initial)
+
+        all_frames_to_global = self.torsion_angles_to_frames(
+            backb_to_global,
+            angles,
+            aatype,
+        )
+
+        pred_xyz = self.frames_and_literature_positions_to_atom14_pos(
+            all_frames_to_global,
+            aatype,
+        )
+
+        scaled_rigids = rigids.scale_translation(self.trans_scale_factor)
+
+        preds = {
+            "frames": scaled_rigids.to_tensor_7(),
+            "sidechain_frames": all_frames_to_global.to_tensor_4x4(),
+            "unnormalized_angles": unnormalized_angles,
+            "angles": angles,
+            "positions": pred_xyz,
+            "states": post_line_9_single_rep,
+        }
+
+        outputs.append(preds)
+
+        rigids = rigids.stop_rot_gradient()
+
+        ####Repeat loop from 2nd layer
+
+        ##########################
+
+        for i in range(1, self.no_blocks): #Swapped to start at 1
+        # for i in range(1):
+            # [*, N, C_s]
+            s = s + self.ipa(
+                s, 
+                z, 
+                rigids, 
+                mask, 
+                _z_reference_list=None
+            )
+            s = self.ipa_dropout(s)
+            s = self.layer_norm_ipa(s)
+            s = self.transition(s)
+
+           
+            # [*, N]
+            rigids = rigids.compose_q_update_vec(self.bb_update(s))
+
+            # To hew as closely as possible to AlphaFold, we convert our
+            # quaternion-based transformations to rotation-matrix ones
+            # here
+            backb_to_global = Rigid(
+                Rotation(
+                    rot_mats=rigids.get_rots().get_rot_mats(), 
+                    quats=None
+                ),
+                rigids.get_trans(),
+            )
+
+            backb_to_global = backb_to_global.scale_translation(
+                self.trans_scale_factor
+            )
+
+            # [*, N, 7, 2]
+            unnormalized_angles, angles = self.angle_resnet(s, s_initial)
+
+            all_frames_to_global = self.torsion_angles_to_frames(
+                backb_to_global,
+                angles,
+                aatype,
+            )
+
+            pred_xyz = self.frames_and_literature_positions_to_atom14_pos(
+                all_frames_to_global,
+                aatype,
+            )
+
+            scaled_rigids = rigids.scale_translation(self.trans_scale_factor)
+            
+            preds = {
+                "frames": scaled_rigids.to_tensor_7(),
+                "sidechain_frames": all_frames_to_global.to_tensor_4x4(),
+                "unnormalized_angles": unnormalized_angles,
+                "angles": angles,
+                "positions": pred_xyz,
+                "states": s,
+            }
+
+            outputs.append(preds)
+
+            rigids = rigids.stop_rot_gradient()
+
+        del z
+
+        outputs = dict_multimap(torch.stack, outputs)
+        outputs["single"] = s
+
+        return outputs
+
     def single_rep_to_struct(self, s_initial, post_line_9_single_rep, aatype):
         """
         Converts a single representation to a protein structure by passing the single_representation into line 10 of the
@@ -1216,6 +1361,9 @@ class StructureModule(nn.Module):
         Returns:
             dict: A dictionary containing all of the normal info from the structure module, including the info necessary to construct a .pdb file
         """
+
+        #Bug Fix as of 6_2_24
+        s_initial = self.layer_norm_s(s_initial)
         
         # [*, N]
         rigids = Rigid.identity(
